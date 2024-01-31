@@ -45,4 +45,7 @@ docker exec docker-kafka-connect-1 ls /home/appuser/data
 
 // To view Flink aggreagted output files :
 docker exec docker-flink-task-manager-1 ls /opt/flink/log
+
+// To view Flink job status :
+http://localhost:8081/#/job/running
 ----
