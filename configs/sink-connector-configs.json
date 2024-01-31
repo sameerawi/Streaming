@@ -1,0 +1,15 @@
+{
+  "name": "local-parquet-sink",
+  "config": {
+    "connector.class": "io.confluent.connect.hdfs.HdfsSinkConnector",
+    "tasks.max": "1",
+    "topics": "events",
+    "hdfs.url": "file:///home/appuser/data",
+    "flush.size": "1000",
+    "offset.flush.interval.ms": "60000",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+    "format.class": "io.confluent.connect.hdfs.json.JsonFormat"
+  }
+}

@@ -1,0 +1,152 @@
+version: '2'
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    hostname: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "localhost", "2181" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka
+    ports:
+      - "9092:9092"
+    expose:
+      - "29092" # Internal listener for inter-container communication
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://kafka:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_HOST://kafka:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_CONFLUENT_SUPPORT_METRICS_ENABLE: "false"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "kafka-topics", "--list", "--bootstrap-server", "kafka:9092" ]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:6.2.0
+    hostname: kafka-connect
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: "kafka:29092"
+      CONNECT_REST_PORT: "8083"
+      CONNECT_GROUP_ID: "kafka-connect"
+      CONNECT_CONFIG_STORAGE_TOPIC: "connect-config"
+      CONNECT_OFFSET_STORAGE_TOPIC: "connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "connect-status"
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      #CONNECT_PLUGIN_PATH: "/usr/share/java"
+      #CLASSPATH: "/usr/share/java/avro/*:/usr/share/java/confluent-common/*:/usr/share/java/kafka/*:/usr/share/java/confluent-rest-utils/*"
+    depends_on:
+        kafka:
+          condition: service_healthy
+    ports:
+      - "8083:8083"
+#    volumes:
+#      - type: bind
+#        source: ../plugins/confluentinc-kafka-connect-hdfs-10.2.5
+#        target: /usr/share/java/confluentinc-kafka-connect-hdfs-10.2.5
+    command: [ "confluent-hub", "install", "--no-prompt", "confluentinc/kafka-connect-hdfs:latest" ]
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "http://localhost:8083/" ]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+
+  init-kafka:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-connect:
+        condition: service_healthy
+    volumes:
+      - ../configs/sink-connector-configs.json:/home/appuser/sink-connector-configs.json
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      # blocks until kafka is reachable
+      kafka-topics --bootstrap-server kafka:29092 --list
+      
+      echo -e 'Creating kafka topics'
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic events --replication-factor 1 --partitions 1
+      
+      echo -e 'Successfully created the following topics:'
+      kafka-topics --bootstrap-server kafka:29092 --list
+      
+      echo -e 'Creating local-parquet-sink kafka connector'
+      curl -X POST -H "Content-Type: application/json" -d @sink-connector-configs.json "http://localhost:8083/connectors"
+      "
+
+  kafka-event-producer:
+    build:
+      context: ../kafka-event-producer
+      dockerfile: Dockerfile
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  flink-job-manager:
+    build:
+      context: ../event-processor
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+      - "6123:6123"
+    command: jobmanager
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-job-manager
+#    volumes:
+#      - /tmp/flink-deployer:/data/flink
+
+  flink-task-manager:
+    build:
+      context: ../event-processor
+      dockerfile: Dockerfile
+    depends_on:
+      - flink-job-manager
+    command: taskmanager
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-job-manager
+#    volumes:
+#      - /tmp/flink-deployer:/data/flink
+
+  flink-job-submitter:
+    build:
+      context: ../event-processor
+      dockerfile: Dockerfile
+#    volumes:
+#      - ./path/to/your/flink-job.jar:/job.jar
+    command: >
+      bash -c "
+      /opt/flink/bin/flink run -m flink-job-manager:8081 -c EventProcessor -d /opt/flink/target/scala-2.12/event-processor-assembly-0.1.0-SNAPSHOT.jar
+      sleep infinity
+      "
+    depends_on:
+      - flink-job-manager
+      - flink-task-manager

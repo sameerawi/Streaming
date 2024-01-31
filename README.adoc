@@ -1,0 +1,39 @@
+= Streaming Analytics using Kafka and Flink
+
+=== Component Diagram
+
+
+                             ┌──────────────┐
+                             │              │
+                             │    Flink     │
+                             │              │
+                             └──────────────┘
+                                    ▲
+                                    │
+                                    │
+┌────────────────┐           ┌──────┴───────┐
+│                │           │              │
+│ Event Producer ├──────────►│    Kafka     │
+│                │           │              │
+└────────────────┘           └──────┬───────┘
+                                    │
+                                    │
+                                    │
+                                    ▼
+                             ┌──────────────┐
+                             │              │
+                             │ KafkaConnect │
+                             │              │
+                             └──────────────┘
+
+
+=== Installation instructions
+
+[source,bash]
+----
+cd docker
+
+docker-compose up -d --build
+----
+
+
