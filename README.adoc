@@ -36,4 +36,13 @@ cd docker
 docker-compose up -d --build
 ----
 
+=== Verifying Results
 
+[source,bash]
+----
+// To view KafkaConnect output files :
+docker exec docker-kafka-connect-1 ls /home/appuser/data
+
+// To view Flink aggreagted output files :
+docker exec docker-flink-task-manager-1 ls /opt/flink/log
+----
